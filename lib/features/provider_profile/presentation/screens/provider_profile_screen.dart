@@ -1,10 +1,18 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:wirasasa/app/app_router.dart';
 import 'package:wirasasa/core/theme/app_colors.dart';
 import 'package:wirasasa/core/utils/mock_data.dart';
+import 'package:wirasasa/features/service_request/presentation/providers/booking_flow_provider.dart';
 import 'package:wirasasa/shared_widgets/primary_button.dart';
 
-class ProviderProfileScreen extends StatelessWidget {
+const LatLng _clientLocation = LatLng(-1.2600, 36.8040);
+
+class ProviderProfileScreen extends ConsumerWidget {
   const ProviderProfileScreen({
     super.key,
     this.provider,
@@ -17,12 +25,15 @@ class ProviderProfileScreen extends StatelessWidget {
   final DateTime? scheduledDateTime;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final item = provider ?? MockData.providers.first;
+    final bookingFlow = ref.watch(bookingFlowProvider);
+    final activeSchedule = scheduledDateTime ?? bookingFlow.scheduledDateTime;
+
     return Scaffold(
       body: Stack(
         children: [
-          const _ProfileMapBackdrop(),
+          Positioned.fill(child: _ProfileTrackingMap(provider: item)),
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(20),
@@ -150,7 +161,26 @@ class ProviderProfileScreen extends StatelessWidget {
                             ),
                           ],
                         ),
-                        if (scheduledDateTime != null) ...[
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.route_rounded,
+                              color: AppColors.muted,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'Live route preview is locked to ${item.name}.',
+                                style: const TextStyle(
+                                  color: AppColors.slate,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (activeSchedule != null) ...[
                           const SizedBox(height: 10),
                           Row(
                             children: [
@@ -161,7 +191,7 @@ class ProviderProfileScreen extends StatelessWidget {
                               const SizedBox(width: 10),
                               Expanded(
                                 child: Text(
-                                  'Scheduled for ${_formatSchedule(scheduledDateTime!)}',
+                                  'Scheduled for ${_formatSchedule(activeSchedule)}',
                                   style: const TextStyle(
                                     color: AppColors.slate,
                                     fontSize: 16,
@@ -177,8 +207,15 @@ class ProviderProfileScreen extends StatelessWidget {
                   const SizedBox(height: 20),
                   PrimaryButton(
                     label: 'Request Service',
-                    onPressed: () =>
-                        Navigator.pushNamed(context, AppRouter.serviceRequest),
+                    onPressed: () {
+                      ref.read(bookingFlowProvider.notifier).selectProvider(item);
+                      if (activeSchedule != null) {
+                        ref
+                            .read(bookingFlowProvider.notifier)
+                            .setSchedule(activeSchedule);
+                      }
+                      Navigator.pushNamed(context, AppRouter.serviceRequest);
+                    },
                   ),
                   const SizedBox(height: 14),
                   Row(
@@ -237,67 +274,168 @@ class ProviderProfileScreen extends StatelessWidget {
   }
 }
 
-class _ProfileMapBackdrop extends StatelessWidget {
-  const _ProfileMapBackdrop();
+class _ProfileTrackingMap extends StatefulWidget {
+  const _ProfileTrackingMap({required this.provider});
+
+  final ProviderPreview provider;
+
+  @override
+  State<_ProfileTrackingMap> createState() => _ProfileTrackingMapState();
+}
+
+class _ProfileTrackingMapState extends State<_ProfileTrackingMap> {
+  GoogleMapController? _controller;
+  Timer? _timer;
+  late final List<LatLng> _trackingPath;
+  int _trackingIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _trackingPath = _buildTrackingPath(widget.provider);
+    if (_supportsGoogleMaps) {
+      _timer = Timer.periodic(const Duration(seconds: 2), (_) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _trackingIndex = (_trackingIndex + 1) % _trackingPath.length;
+        });
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    if (!_supportsGoogleMaps) {
+      return _UnsupportedMapFallback(
+        title: widget.provider.name,
+        subtitle: 'Google Maps is enabled for Android and iOS builds.',
+      );
+    }
+
+    final providerPosition = _trackingPath[_trackingIndex];
+    final markers = {
+      Marker(
+        markerId: const MarkerId('client'),
+        position: _clientLocation,
+        infoWindow: const InfoWindow(title: 'Client'),
+        icon: _markerIcon(isClient: true),
+      ),
+      Marker(
+        markerId: const MarkerId('provider'),
+        position: providerPosition,
+        infoWindow: InfoWindow(title: widget.provider.name),
+        icon: _markerIcon(isClient: false),
+      ),
+    };
+
+    return GoogleMap(
+      initialCameraPosition: CameraPosition(
+        target: LatLng(
+          (_clientLocation.latitude + widget.provider.latitude) / 2,
+          (_clientLocation.longitude + widget.provider.longitude) / 2,
+        ),
+        zoom: 13.8,
+      ),
+      myLocationButtonEnabled: false,
+      zoomControlsEnabled: false,
+      compassEnabled: false,
+      onMapCreated: (controller) {
+        _controller = controller;
+        _fitBounds();
+      },
+      polylines: {
+        Polyline(
+          polylineId: const PolylineId('provider-route'),
+          points: _trackingPath,
+          width: 5,
+          color: AppColors.green,
+        ),
+      },
+      markers: markers,
+    );
+  }
+
+  Future<void> _fitBounds() async {
+    final controller = _controller;
+    if (controller == null) {
+      return;
+    }
+    final points = [_clientLocation, widget.provider.location];
+    final south = points
+        .map((point) => point.latitude)
+        .reduce((value, element) => value < element ? value : element);
+    final north = points
+        .map((point) => point.latitude)
+        .reduce((value, element) => value > element ? value : element);
+    final west = points
+        .map((point) => point.longitude)
+        .reduce((value, element) => value < element ? value : element);
+    final east = points
+        .map((point) => point.longitude)
+        .reduce((value, element) => value > element ? value : element);
+
+    await controller.animateCamera(
+      CameraUpdate.newLatLngBounds(
+        LatLngBounds(
+          southwest: LatLng(south, west),
+          northeast: LatLng(north, east),
+        ),
+        64,
+      ),
+    );
+  }
+}
+
+class _UnsupportedMapFallback extends StatelessWidget {
+  const _UnsupportedMapFallback({
+    required this.title,
+    required this.subtitle,
+  });
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFFF5F7FB), Color(0xFFF7F7F8)],
+          colors: [Color(0xFFEAF5EE), Color(0xFFF7F7F8)],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),
       ),
-      child: Stack(
-        children: const [
-          Positioned(top: 100, left: 40, child: _StreetLabel('Sarit Centre')),
-          Positioned(top: 170, right: 38, child: _StreetLabel('Muthaiga')),
-          Positioned(top: 280, left: 100, child: _StreetLabel('Westlands')),
-          Positioned(top: 190, left: 210, child: _GreenMarker()),
-        ],
-      ),
-    );
-  }
-}
-
-class _StreetLabel extends StatelessWidget {
-  const _StreetLabel(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(
-        color: Color(0xFF4D73C3),
-        fontWeight: FontWeight.w700,
-      ),
-    );
-  }
-}
-
-class _GreenMarker extends StatelessWidget {
-  const _GreenMarker();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 70,
-      height: 70,
-      decoration: const BoxDecoration(
-        color: AppColors.green,
-        shape: BoxShape.circle,
-      ),
-      alignment: Alignment.center,
-      child: const Text(
-        'JS',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 30,
-          fontWeight: FontWeight.w800,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.map_outlined, size: 72, color: AppColors.green),
+              const SizedBox(height: 18),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                subtitle,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppColors.slate, height: 1.4),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -369,9 +507,43 @@ class _ReviewTile extends StatelessWidget {
   }
 }
 
+List<LatLng> _buildTrackingPath(ProviderPreview provider) {
+  return [
+    provider.location,
+    LatLng(provider.latitude - 0.0012, provider.longitude - 0.0018),
+    LatLng(provider.latitude - 0.0024, provider.longitude - 0.0034),
+    LatLng(provider.latitude - 0.0030, provider.longitude - 0.0048),
+    _clientLocation,
+  ];
+}
+
 String _formatSchedule(DateTime value) {
   final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
   final period = value.hour < 12 ? 'AM' : 'PM';
   final minute = value.minute.toString().padLeft(2, '0');
   return '${value.day}/${value.month}/${value.year} • $hour:$minute $period';
+}
+
+extension on ProviderPreview {
+  LatLng get location => LatLng(latitude, longitude);
+}
+
+BitmapDescriptor _markerIcon({required bool isClient}) {
+  if (kIsWeb) {
+    return BitmapDescriptor.defaultMarker;
+  }
+  return BitmapDescriptor.defaultMarkerWithHue(
+    isClient ? BitmapDescriptor.hueAzure : BitmapDescriptor.hueGreen,
+  );
+}
+
+bool get _supportsGoogleMaps {
+  if (kIsWeb) {
+    return const bool.fromEnvironment('ENABLE_WEB_GOOGLE_MAPS');
+  }
+  return switch (defaultTargetPlatform) {
+    TargetPlatform.android => true,
+    TargetPlatform.iOS => true,
+    _ => false,
+  };
 }

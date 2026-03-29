@@ -1,10 +1,16 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:wirasasa/app/app_router.dart';
 import 'package:wirasasa/core/theme/app_colors.dart';
 import 'package:wirasasa/core/utils/mock_data.dart';
 import 'package:wirasasa/features/provider_profile/presentation/models/provider_profile_arguments.dart';
+import 'package:wirasasa/features/service_request/presentation/providers/booking_flow_provider.dart';
 
-class MapDiscoveryScreen extends StatefulWidget {
+const LatLng _clientLocation = LatLng(-1.2600, 36.8040);
+
+class MapDiscoveryScreen extends ConsumerStatefulWidget {
   const MapDiscoveryScreen({
     super.key,
     required this.serviceType,
@@ -17,18 +23,28 @@ class MapDiscoveryScreen extends StatefulWidget {
   final String? initialQuery;
 
   @override
-  State<MapDiscoveryScreen> createState() => _MapDiscoveryScreenState();
+  ConsumerState<MapDiscoveryScreen> createState() => _MapDiscoveryScreenState();
 }
 
-class _MapDiscoveryScreenState extends State<MapDiscoveryScreen> {
+class _MapDiscoveryScreenState extends ConsumerState<MapDiscoveryScreen> {
   late final TextEditingController _controller;
+  GoogleMapController? _mapController;
   late String _query;
+  ProviderPreview? _selectedProvider;
 
   @override
   void initState() {
     super.initState();
     _query = widget.initialQuery ?? widget.serviceType;
     _controller = TextEditingController(text: _query);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref
+          .read(bookingFlowProvider.notifier)
+          .startFlow(
+            serviceType: widget.serviceType,
+            scheduledDateTime: widget.scheduledDateTime,
+          );
+    });
   }
 
   @override
@@ -39,24 +55,40 @@ class _MapDiscoveryScreenState extends State<MapDiscoveryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final providers = MockData.providers.where((provider) {
-      final query = _query.trim().toLowerCase();
-      if (query.isEmpty) {
-        return provider.service == widget.serviceType;
-      }
-      return provider.service.toLowerCase().contains(query) ||
-          provider.name.toLowerCase().contains(query);
-    }).toList();
-    final visibleProviders = providers.isEmpty
-        ? MockData.providers
-              .where((provider) => provider.service == widget.serviceType)
-              .toList()
-        : providers;
+    final providers = _visibleProviders;
+    final selectedProvider = _resolveSelectedProvider(providers);
 
     return Scaffold(
       body: Stack(
         children: [
-          const _MapBackdrop(),
+          Positioned.fill(
+            child: _supportsGoogleMaps
+                ? GoogleMap(
+                    initialCameraPosition: CameraPosition(
+                      target: selectedProvider?.location ?? _clientLocation,
+                      zoom: 13.8,
+                    ),
+                    myLocationButtonEnabled: false,
+                    zoomControlsEnabled: false,
+                    compassEnabled: false,
+                    markers: _buildMarkers(providers, selectedProvider),
+                    polylines: selectedProvider == null
+                        ? const {}
+                        : {
+                            Polyline(
+                              polylineId: const PolylineId('selected-route'),
+                              points: [_clientLocation, selectedProvider.location],
+                              width: 5,
+                              color: AppColors.green,
+                            ),
+                          },
+                    onMapCreated: (controller) {
+                      _mapController = controller;
+                      _focusOnProviders(providers, selectedProvider);
+                    },
+                  )
+                : const _UnsupportedMapFallback(),
+          ),
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
@@ -93,8 +125,13 @@ class _MapDiscoveryScreenState extends State<MapDiscoveryScreen> {
                               Expanded(
                                 child: TextField(
                                   controller: _controller,
-                                  onChanged: (value) =>
-                                      setState(() => _query = value),
+                                  onChanged: (value) {
+                                    setState(() => _query = value);
+                                    _focusOnProviders(
+                                      _visibleProviders,
+                                      _selectedProvider,
+                                    );
+                                  },
                                   decoration: const InputDecoration(
                                     hintText: 'Which service do you need?',
                                     border: InputBorder.none,
@@ -114,7 +151,6 @@ class _MapDiscoveryScreenState extends State<MapDiscoveryScreen> {
               ),
             ),
           ),
-          _MarkerLayer(providers: visibleProviders),
           DraggableScrollableSheet(
             initialChildSize: 0.42,
             minChildSize: 0.36,
@@ -155,21 +191,35 @@ class _MapDiscoveryScreenState extends State<MapDiscoveryScreen> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+                    if (selectedProvider != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        'Selected: ${selectedProvider.name}',
+                        style: const TextStyle(
+                          color: AppColors.green,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 14),
-                    ...visibleProviders.map(
+                    ...providers.map(
                       (provider) => Padding(
                         padding: const EdgeInsets.only(bottom: 12),
                         child: _ProviderListCard(
                           provider: provider,
-                          onTap: () => Navigator.pushNamed(
-                            context,
-                            AppRouter.providerProfile,
-                            arguments: ProviderProfileArguments(
-                              provider: provider,
-                              serviceType: widget.serviceType,
-                              scheduledDateTime: widget.scheduledDateTime,
-                            ),
-                          ),
+                          isSelected: provider.name == selectedProvider?.name,
+                          onTap: () {
+                            _selectProvider(provider);
+                            Navigator.pushNamed(
+                              context,
+                              AppRouter.providerProfile,
+                              arguments: ProviderProfileArguments(
+                                provider: provider,
+                                serviceType: widget.serviceType,
+                                scheduledDateTime: widget.scheduledDateTime,
+                              ),
+                            );
+                          },
                         ),
                       ),
                     ),
@@ -182,119 +232,148 @@ class _MapDiscoveryScreenState extends State<MapDiscoveryScreen> {
       ),
     );
   }
-}
 
-class _MapBackdrop extends StatelessWidget {
-  const _MapBackdrop();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: const Color(0xFFF7F8FB),
-      child: Stack(
-        children: [
-          for (final label in const [
-            ('Sarit Centre', 80.0, 110.0),
-            ('Westgate Mall', 180.0, 135.0),
-            ('Village Market', 330.0, 145.0),
-            ('Muthaiga', 390.0, 165.0),
-            ('Westlands', 150.0, 260.0),
-            ('Mugo Rd', 255.0, 375.0),
-          ])
-            Positioned(
-              left: label.$2,
-              top: label.$3,
-              child: Text(
-                label.$1,
-                style: const TextStyle(
-                  color: Color(0xFF4D73C3),
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          Positioned.fill(child: CustomPaint(painter: _StreetPainter())),
-        ],
-      ),
-    );
-  }
-}
-
-class _StreetPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final roadPaint = Paint()
-      ..color = const Color(0xFFE7E8ED)
-      ..strokeWidth = 6;
-    final buildingsPaint = Paint()..color = const Color(0xFFF0F0F2);
-
-    for (double x = 40; x < size.width; x += 60) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), roadPaint);
-    }
-    for (double y = 80; y < size.height; y += 70) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), roadPaint);
-    }
-    for (double x = 30; x < size.width; x += 80) {
-      for (double y = 40; y < size.height; y += 90) {
-        canvas.drawRect(Rect.fromLTWH(x, y, 34, 38), buildingsPaint);
+  List<ProviderPreview> get _visibleProviders {
+    final providers = MockData.providers.where((provider) {
+      final query = _query.trim().toLowerCase();
+      if (query.isEmpty) {
+        return provider.service == widget.serviceType;
       }
+      return provider.service.toLowerCase().contains(query) ||
+          provider.name.toLowerCase().contains(query);
+    }).toList();
+    if (providers.isNotEmpty) {
+      return providers;
     }
+    return MockData.providers
+        .where((provider) => provider.service == widget.serviceType)
+        .toList();
   }
 
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
+  ProviderPreview? _resolveSelectedProvider(List<ProviderPreview> providers) {
+    final bookingFlow = ref.watch(bookingFlowProvider);
+    final preserved = bookingFlow.selectedProvider;
+    if (_selectedProvider != null &&
+        providers.any((provider) => provider.name == _selectedProvider!.name)) {
+      return _selectedProvider;
+    }
+    if (preserved != null &&
+        providers.any((provider) => provider.name == preserved.name)) {
+      _selectedProvider = preserved;
+      return preserved;
+    }
+    if (providers.isEmpty) {
+      _selectedProvider = null;
+      return null;
+    }
+    _selectedProvider = providers.first;
+    ref.read(bookingFlowProvider.notifier).selectProvider(_selectedProvider!);
+    return _selectedProvider;
+  }
 
-class _MarkerLayer extends StatelessWidget {
-  const _MarkerLayer({required this.providers});
-
-  final List<ProviderPreview> providers;
-
-  @override
-  Widget build(BuildContext context) {
-    final positions = [
-      const Offset(240, 250),
-      const Offset(200, 300),
-      const Offset(160, 340),
-      const Offset(275, 220),
-    ];
-    return Stack(
-      children: [
-        for (
-          int index = 0;
-          index < providers.length && index < positions.length;
-          index++
-        )
-          Positioned(
-            left: positions[index].dx,
-            top: positions[index].dy,
-            child: _MapMarker(initials: providers[index].initials),
+  Set<Marker> _buildMarkers(
+    List<ProviderPreview> providers,
+    ProviderPreview? selectedProvider,
+  ) {
+    return {
+      Marker(
+        markerId: const MarkerId('client'),
+        position: _clientLocation,
+        infoWindow: const InfoWindow(title: 'Client'),
+        icon: _markerIcon(isClient: true, isSelected: false),
+      ),
+      ...providers.map(
+        (provider) => Marker(
+          markerId: MarkerId(provider.name),
+          position: provider.location,
+          infoWindow: InfoWindow(
+            title: provider.name,
+            snippet: '${provider.service} • ${provider.eta}',
           ),
-      ],
+          icon: _markerIcon(
+            isClient: false,
+            isSelected: provider.name == selectedProvider?.name,
+          ),
+          onTap: () => _selectProvider(provider),
+        ),
+      ),
+    };
+  }
+
+  Future<void> _focusOnProviders(
+    List<ProviderPreview> providers,
+    ProviderPreview? selectedProvider,
+  ) async {
+    final controller = _mapController;
+    if (controller == null || !_supportsGoogleMaps || providers.isEmpty) {
+      return;
+    }
+
+    if (selectedProvider != null) {
+      await controller.animateCamera(
+        CameraUpdate.newLatLngZoom(selectedProvider.location, 14.5),
+      );
+      return;
+    }
+
+    final points = [_clientLocation, ...providers.map((provider) => provider.location)];
+    final south = points
+        .map((point) => point.latitude)
+        .reduce((value, element) => value < element ? value : element);
+    final north = points
+        .map((point) => point.latitude)
+        .reduce((value, element) => value > element ? value : element);
+    final west = points
+        .map((point) => point.longitude)
+        .reduce((value, element) => value < element ? value : element);
+    final east = points
+        .map((point) => point.longitude)
+        .reduce((value, element) => value > element ? value : element);
+
+    await controller.animateCamera(
+      CameraUpdate.newLatLngBounds(
+        LatLngBounds(
+          southwest: LatLng(south, west),
+          northeast: LatLng(north, east),
+        ),
+        64,
+      ),
     );
   }
+
+  void _selectProvider(ProviderPreview provider) {
+    ref.read(bookingFlowProvider.notifier).selectProvider(provider);
+    setState(() => _selectedProvider = provider);
+    _focusOnProviders(_visibleProviders, provider);
+  }
 }
 
-class _MapMarker extends StatelessWidget {
-  const _MapMarker({required this.initials});
-
-  final String initials;
+class _UnsupportedMapFallback extends StatelessWidget {
+  const _UnsupportedMapFallback();
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 64,
-      height: 64,
       decoration: const BoxDecoration(
-        color: AppColors.green,
-        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          colors: [Color(0xFFEAF5EE), Color(0xFFF7F7F8)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
       ),
-      alignment: Alignment.center,
-      child: Text(
-        initials,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 26,
-          fontWeight: FontWeight.w800,
+      child: const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'Google Maps is enabled for Android and iOS builds. This platform keeps the booking overlays but skips the embedded map.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: AppColors.slate,
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              height: 1.4,
+            ),
+          ),
         ),
       ),
     );
@@ -302,10 +381,15 @@ class _MapMarker extends StatelessWidget {
 }
 
 class _ProviderListCard extends StatelessWidget {
-  const _ProviderListCard({required this.provider, required this.onTap});
+  const _ProviderListCard({
+    required this.provider,
+    required this.onTap,
+    required this.isSelected,
+  });
 
   final ProviderPreview provider;
   final VoidCallback onTap;
+  final bool isSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -318,7 +402,10 @@ class _ProviderListCard extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            border: Border.all(color: AppColors.line),
+            border: Border.all(
+              color: isSelected ? AppColors.green : AppColors.line,
+              width: isSelected ? 1.5 : 1,
+            ),
             borderRadius: BorderRadius.circular(20),
           ),
           child: Row(
@@ -364,6 +451,8 @@ class _ProviderListCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (isSelected)
+                const Icon(Icons.check_circle_rounded, color: AppColors.green),
             ],
           ),
         ),
@@ -391,4 +480,34 @@ String _formatBookingDateTime(DateTime value) {
   final period = value.hour < 12 ? 'AM' : 'PM';
   final minute = value.minute.toString().padLeft(2, '0');
   return '${months[value.month - 1]} ${value.day}, ${value.year} • $hour:$minute $period';
+}
+
+extension on ProviderPreview {
+  LatLng get location => LatLng(latitude, longitude);
+}
+
+BitmapDescriptor _markerIcon({
+  required bool isClient,
+  required bool isSelected,
+}) {
+  if (kIsWeb) {
+    return BitmapDescriptor.defaultMarker;
+  }
+  if (isClient) {
+    return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure);
+  }
+  return BitmapDescriptor.defaultMarkerWithHue(
+    isSelected ? BitmapDescriptor.hueGreen : BitmapDescriptor.hueOrange,
+  );
+}
+
+bool get _supportsGoogleMaps {
+  if (kIsWeb) {
+    return const bool.fromEnvironment('ENABLE_WEB_GOOGLE_MAPS');
+  }
+  return switch (defaultTargetPlatform) {
+    TargetPlatform.android => true,
+    TargetPlatform.iOS => true,
+    _ => false,
+  };
 }

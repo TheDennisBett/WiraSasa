@@ -26,6 +26,8 @@ class ProviderPreview {
     required this.pricePerHour,
     required this.service,
     required this.review,
+    required this.latitude,
+    required this.longitude,
   });
 
   final String name;
@@ -36,6 +38,8 @@ class ProviderPreview {
   final int pricePerHour;
   final String service;
   final String review;
+  final double latitude;
+  final double longitude;
 
   String get initials {
     final parts = name.split(' ');
@@ -124,6 +128,8 @@ class MockData {
       pricePerHour: 8500,
       service: 'Electrician',
       review: 'Arrived quickly and fixed the power issue cleanly.',
+      latitude: -1.2674,
+      longitude: 36.8108,
     ),
     ProviderPreview(
       name: 'Sarah Johnson',
@@ -134,6 +140,8 @@ class MockData {
       pricePerHour: 8000,
       service: 'Plumber',
       review: 'Clear communication and reliable work from start to finish.',
+      latitude: -1.2649,
+      longitude: 36.8047,
     ),
     ProviderPreview(
       name: 'Mike Davis',
@@ -144,6 +152,8 @@ class MockData {
       pricePerHour: 7500,
       service: 'Mechanic',
       review: 'Diagnosed the problem fast and explained each repair step.',
+      latitude: -1.2568,
+      longitude: 36.8222,
     ),
     ProviderPreview(
       name: 'Amina Njeri',
@@ -154,6 +164,8 @@ class MockData {
       pricePerHour: 6800,
       service: 'Gardener',
       review: 'Very organized, punctual, and detail oriented.',
+      latitude: -1.2726,
+      longitude: 36.7981,
     ),
   ];
 

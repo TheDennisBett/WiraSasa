@@ -5,6 +5,7 @@ import 'package:wirasasa/core/theme/app_colors.dart';
 import 'package:wirasasa/core/utils/mock_data.dart';
 import 'package:wirasasa/features/home/presentation/providers/schedule_provider.dart';
 import 'package:wirasasa/features/map_discovery/presentation/models/map_discovery_arguments.dart';
+import 'package:wirasasa/features/service_request/presentation/providers/booking_flow_provider.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -300,6 +301,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         child: OutlinedButton(
                           onPressed: () {
                             ref.read(scheduleProvider.notifier).clear();
+                            ref.read(bookingFlowProvider.notifier).setSchedule(
+                              null,
+                            );
                             Navigator.pop(context);
                           },
                           style: OutlinedButton.styleFrom(
@@ -330,6 +334,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             ref
                                 .read(scheduleProvider.notifier)
                                 .setSchedule(scheduled);
+                            ref
+                                .read(bookingFlowProvider.notifier)
+                                .setSchedule(scheduled);
                             Navigator.pop(context);
                           },
                           style: FilledButton.styleFrom(
@@ -358,6 +365,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   void _openService(String serviceType) {
     final scheduleState = ref.read(scheduleProvider);
+    ref
+        .read(bookingFlowProvider.notifier)
+        .startFlow(
+          serviceType: serviceType,
+          scheduledDateTime: scheduleState.isScheduledBooking
+              ? scheduleState.scheduledTime
+              : null,
+        );
     Navigator.pushNamed(
       context,
       AppRouter.mapDiscovery,
@@ -369,9 +384,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         initialQuery: _query.isEmpty ? serviceType : _query,
       ),
     );
-    if (scheduleState.isScheduledBooking) {
-      ref.read(scheduleProvider.notifier).clear();
-    }
   }
 }
 
