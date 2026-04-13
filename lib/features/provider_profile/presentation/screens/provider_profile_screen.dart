@@ -4,271 +4,326 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:wirasasa/app/app_providers.dart';
 import 'package:wirasasa/app/app_router.dart';
+import 'package:wirasasa/core/network/api_client.dart';
+import 'package:wirasasa/core/network/api_models.dart';
 import 'package:wirasasa/core/theme/app_colors.dart';
-import 'package:wirasasa/core/utils/mock_data.dart';
 import 'package:wirasasa/features/service_request/presentation/providers/booking_flow_provider.dart';
 import 'package:wirasasa/shared_widgets/primary_button.dart';
 
 const LatLng _clientLocation = LatLng(-1.2600, 36.8040);
 
-class ProviderProfileScreen extends ConsumerWidget {
+class ProviderProfileScreen extends ConsumerStatefulWidget {
   const ProviderProfileScreen({
     super.key,
     this.provider,
-    this.serviceType,
+    this.serviceCode,
+    this.serviceName,
     this.scheduledDateTime,
   });
 
-  final ProviderPreview? provider;
-  final String? serviceType;
+  final ProviderSummary? provider;
+  final String? serviceCode;
+  final String? serviceName;
   final DateTime? scheduledDateTime;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final item = provider ?? MockData.providers.first;
+  ConsumerState<ProviderProfileScreen> createState() =>
+      _ProviderProfileScreenState();
+}
+
+class _ProviderProfileScreenState extends ConsumerState<ProviderProfileScreen> {
+  late Future<ProviderSummary> _providerFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _providerFuture = widget.provider == null
+        ? Future<ProviderSummary>.error('Provider not found.')
+        : ref.read(providersApiProvider).getProvider(widget.provider!.id);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final bookingFlow = ref.watch(bookingFlowProvider);
-    final activeSchedule = scheduledDateTime ?? bookingFlow.scheduledDateTime;
+    final activeSchedule = widget.scheduledDateTime ?? bookingFlow.scheduledDateTime;
 
     return Scaffold(
-      body: Stack(
-        children: [
-          Positioned.fill(child: _ProfileTrackingMap(provider: item)),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Align(
-                alignment: Alignment.topLeft,
-                child: CircleAvatar(
-                  radius: 24,
-                  backgroundColor: Colors.white,
-                  child: IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back_rounded),
+      body: FutureBuilder<ProviderSummary>(
+        future: _providerFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            final error = snapshot.error;
+            final message = error is ApiException
+                ? error.message
+                : 'Failed to load provider profile.';
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(message, textAlign: TextAlign.center),
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      onPressed: () {
+                        setState(() {
+                          _providerFuture = ref
+                              .read(providersApiProvider)
+                              .getProvider(widget.provider!.id);
+                        });
+                      },
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          final item = snapshot.data!;
+          final primaryService = item.primaryService;
+          return Stack(
+            children: [
+              Positioned.fill(child: _ProfileTrackingMap(provider: item)),
+              SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Align(
+                    alignment: Alignment.topLeft,
+                    child: CircleAvatar(
+                      radius: 24,
+                      backgroundColor: Colors.white,
+                      child: IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.arrow_back_rounded),
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-              padding: const EdgeInsets.fromLTRB(20, 26, 20, 26),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-              ),
-              child: ListView(
-                shrinkWrap: true,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 80,
-                        height: 80,
-                        decoration: const BoxDecoration(
-                          color: AppColors.green,
-                          shape: BoxShape.circle,
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          item.initials,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 32,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    item.name,
-                                    style: const TextStyle(
-                                      fontSize: 26,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                                const Icon(
-                                  Icons.verified_user_outlined,
-                                  color: AppColors.green,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              '⭐ ${item.rating} • ${item.jobs} jobs',
-                              style: const TextStyle(
-                                color: AppColors.slate,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.fromLTRB(20, 26, 20, 26),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
                   ),
-                  const SizedBox(height: 18),
-                  Container(
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF6F7FA),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _InfoColumn(
-                                title: 'Service',
-                                value: serviceType ?? item.service,
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 80,
+                            height: 80,
+                            decoration: const BoxDecoration(
+                              color: AppColors.green,
+                              shape: BoxShape.circle,
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              item.initials,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 32,
+                                fontWeight: FontWeight.w800,
                               ),
                             ),
-                            _InfoColumn(
-                              title: 'Hourly Rate',
-                              value: 'KES${item.pricePerHour}/hr',
-                              valueColor: AppColors.green,
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 18),
-                        const Divider(height: 1),
-                        const SizedBox(height: 18),
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.place_outlined,
-                              color: AppColors.muted,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                '${item.distance} • ${item.eta}',
-                                style: const TextStyle(
-                                  color: AppColors.slate,
-                                  fontSize: 16,
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        item.displayName,
+                                        style: const TextStyle(
+                                          fontSize: 26,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ),
+                                    const Icon(
+                                      Icons.verified_user_outlined,
+                                      color: AppColors.green,
+                                    ),
+                                  ],
                                 ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.route_rounded,
-                              color: AppColors.muted,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                'Live route preview is locked to ${item.name}.',
-                                style: const TextStyle(
-                                  color: AppColors.slate,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (activeSchedule != null) ...[
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.schedule_rounded,
-                                color: AppColors.muted,
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  'Scheduled for ${_formatSchedule(activeSchedule)}',
+                                const SizedBox(height: 6),
+                                Text(
+                                  '⭐ ${item.rating} • ${item.completedJobs} jobs',
                                   style: const TextStyle(
                                     color: AppColors.slate,
                                     fontSize: 16,
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ],
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  PrimaryButton(
-                    label: 'Request Service',
-                    onPressed: () {
-                      ref.read(bookingFlowProvider.notifier).selectProvider(item);
-                      if (activeSchedule != null) {
-                        ref
-                            .read(bookingFlowProvider.notifier)
-                            .setSchedule(activeSchedule);
-                      }
-                      Navigator.pushNamed(context, AppRouter.serviceRequest);
-                    },
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () {},
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size.fromHeight(58),
-                            side: const BorderSide(color: AppColors.line),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
+                      ),
+                      const SizedBox(height: 18),
+                      Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF6F7FA),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _InfoColumn(
+                                    title: 'Service',
+                                    value: widget.serviceName ??
+                                        primaryService?.serviceName ??
+                                        'Service',
+                                  ),
+                                ),
+                                _InfoColumn(
+                                  title: 'Rate',
+                                  value:
+                                      '${primaryService?.currency ?? 'KES'}${primaryService?.basePrice.toStringAsFixed(0) ?? '--'}/${primaryService?.pricingUnit ?? 'job'}',
+                                  valueColor: AppColors.green,
+                                ),
+                              ],
                             ),
-                          ),
-                          icon: const Icon(Icons.chat_bubble_outline_rounded),
-                          label: const Text('Chat'),
+                            const SizedBox(height: 18),
+                            const Divider(height: 1),
+                            const SizedBox(height: 18),
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.place_outlined,
+                                  color: AppColors.muted,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    '${item.distance} • ${item.eta}',
+                                    style: const TextStyle(
+                                      color: AppColors.slate,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.description_outlined,
+                                  color: AppColors.muted,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    item.bio,
+                                    style: const TextStyle(
+                                      color: AppColors.slate,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (activeSchedule != null) ...[
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.schedule_rounded,
+                                    color: AppColors.muted,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      'Scheduled for ${_formatSchedule(activeSchedule)}',
+                                      style: const TextStyle(
+                                        color: AppColors.slate,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
                         ),
                       ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () {},
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size.fromHeight(58),
-                            side: const BorderSide(color: AppColors.line),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
+                      const SizedBox(height: 20),
+                      PrimaryButton(
+                        label: 'Request Service',
+                        onPressed: () {
+                          ref.read(bookingFlowProvider.notifier).selectProvider(item);
+                          if (activeSchedule != null) {
+                            ref
+                                .read(bookingFlowProvider.notifier)
+                                .setSchedule(activeSchedule);
+                          }
+                          Navigator.pushNamed(context, AppRouter.serviceRequest);
+                        },
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () {},
+                              style: OutlinedButton.styleFrom(
+                                minimumSize: const Size.fromHeight(58),
+                                side: const BorderSide(color: AppColors.line),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                              ),
+                              icon: const Icon(Icons.chat_bubble_outline_rounded),
+                              label: const Text('Chat'),
                             ),
                           ),
-                          icon: const Icon(Icons.call_outlined),
-                          label: const Text('Call'),
-                        ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () {},
+                              style: OutlinedButton.styleFrom(
+                                minimumSize: const Size.fromHeight(58),
+                                side: const BorderSide(color: AppColors.line),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                              ),
+                              icon: const Icon(Icons.call_outlined),
+                              label: const Text('Call'),
+                            ),
+                          ),
+                        ],
                       ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Reviews',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 14),
+                      _ReviewTile(name: 'Customer note', review: item.reviewSnippet),
                     ],
                   ),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'Reviews',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 14),
-                  _ReviewTile(name: 'Emily P.', review: item.review),
-                  const SizedBox(height: 12),
-                  const _ReviewTile(
-                    name: 'James K.',
-                    review:
-                        'Responsive, respectful, and did the work without delays.',
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }
@@ -277,7 +332,7 @@ class ProviderProfileScreen extends ConsumerWidget {
 class _ProfileTrackingMap extends StatefulWidget {
   const _ProfileTrackingMap({required this.provider});
 
-  final ProviderPreview provider;
+  final ProviderSummary provider;
 
   @override
   State<_ProfileTrackingMap> createState() => _ProfileTrackingMapState();
@@ -314,28 +369,13 @@ class _ProfileTrackingMapState extends State<_ProfileTrackingMap> {
   @override
   Widget build(BuildContext context) {
     if (!_supportsGoogleMaps) {
-      return _UnsupportedMapFallback(
-        title: widget.provider.name,
+      return const _UnsupportedMapFallback(
+        title: 'Provider route',
         subtitle: 'Google Maps is enabled for Android and iOS builds.',
       );
     }
 
     final providerPosition = _trackingPath[_trackingIndex];
-    final markers = {
-      Marker(
-        markerId: const MarkerId('client'),
-        position: _clientLocation,
-        infoWindow: const InfoWindow(title: 'Client'),
-        icon: _markerIcon(isClient: true),
-      ),
-      Marker(
-        markerId: const MarkerId('provider'),
-        position: providerPosition,
-        infoWindow: InfoWindow(title: widget.provider.name),
-        icon: _markerIcon(isClient: false),
-      ),
-    };
-
     return GoogleMap(
       initialCameraPosition: CameraPosition(
         target: LatLng(
@@ -359,7 +399,20 @@ class _ProfileTrackingMapState extends State<_ProfileTrackingMap> {
           color: AppColors.green,
         ),
       },
-      markers: markers,
+      markers: {
+        Marker(
+          markerId: const MarkerId('client'),
+          position: _clientLocation,
+          infoWindow: const InfoWindow(title: 'Client'),
+          icon: _markerIcon(isClient: true),
+        ),
+        Marker(
+          markerId: const MarkerId('provider'),
+          position: providerPosition,
+          infoWindow: InfoWindow(title: widget.provider.displayName),
+          icon: _markerIcon(isClient: false),
+        ),
+      },
     );
   }
 
@@ -507,7 +560,7 @@ class _ReviewTile extends StatelessWidget {
   }
 }
 
-List<LatLng> _buildTrackingPath(ProviderPreview provider) {
+List<LatLng> _buildTrackingPath(ProviderSummary provider) {
   return [
     provider.location,
     LatLng(provider.latitude - 0.0012, provider.longitude - 0.0018),
@@ -524,7 +577,7 @@ String _formatSchedule(DateTime value) {
   return '${value.day}/${value.month}/${value.year} • $hour:$minute $period';
 }
 
-extension on ProviderPreview {
+extension on ProviderSummary {
   LatLng get location => LatLng(latitude, longitude);
 }
 

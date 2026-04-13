@@ -11,6 +11,8 @@ class AccountScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(appModeProvider);
+    final session = ref.watch(authSessionProvider);
+    final user = session?.user;
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -27,9 +29,9 @@ class AccountScreen extends ConsumerWidget {
                       shape: BoxShape.circle,
                     ),
                     alignment: Alignment.center,
-                    child: const Text(
-                      'DE',
-                      style: TextStyle(
+                    child: Text(
+                      user?.initials ?? 'WS',
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 30,
                         fontWeight: FontWeight.w700,
@@ -37,21 +39,21 @@ class AccountScreen extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(width: 18),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Dennis',
-                          style: TextStyle(
+                          user?.displayName ?? 'Guest',
+                          style: const TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
-                        SizedBox(height: 6),
+                        const SizedBox(height: 6),
                         Text(
-                          'dennis@email.com',
-                          style: TextStyle(
+                          user?.phoneNumber ?? 'Sign in to load account data',
+                          style: const TextStyle(
                             color: AppColors.muted,
                             fontSize: 16,
                           ),
@@ -85,6 +87,16 @@ class AccountScreen extends ConsumerWidget {
                       selected: mode == AppMode.provider,
                       label: 'Provider',
                       onTap: () {
+                        if (!(user?.roles.contains('provider') ?? false)) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Sign in with a provider account to open provider mode.',
+                              ),
+                            ),
+                          );
+                          return;
+                        }
                         ref
                             .read(appModeProvider.notifier)
                             .setMode(AppMode.provider);
@@ -99,29 +111,61 @@ class AccountScreen extends ConsumerWidget {
             Expanded(
               child: ListView(
                 padding: EdgeInsets.zero,
-                children: const [
-                  _AccountMenuTile(
+                children: [
+                  const _AccountMenuTile(
                     icon: Icons.person_outline_rounded,
                     label: 'Profile',
                   ),
-                  _AccountMenuTile(
+                  const _AccountMenuTile(
                     icon: Icons.account_balance_wallet_outlined,
                     label: 'Wallet',
                   ),
-                  _AccountMenuTile(
+                  const _AccountMenuTile(
                     icon: Icons.shield_outlined,
                     label: 'Safety',
                   ),
-                  _AccountMenuTile(
+                  const _AccountMenuTile(
                     icon: Icons.settings_outlined,
                     label: 'Settings',
                   ),
-                  _AccountMenuTile(
+                  const _AccountMenuTile(
                     icon: Icons.description_outlined,
                     label: 'Legal',
                   ),
-                  SizedBox(height: 36),
-                  Center(
+                  Container(
+                    decoration: const BoxDecoration(
+                      border: Border(top: BorderSide(color: AppColors.line)),
+                    ),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 8,
+                      ),
+                      leading: const Icon(
+                        Icons.logout_rounded,
+                        color: AppColors.slate,
+                        size: 30,
+                      ),
+                      title: const Text(
+                        'Sign out',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      onTap: () {
+                        ref.read(authSessionProvider.notifier).clear();
+                        ref.read(appModeProvider.notifier).setMode(AppMode.client);
+                        Navigator.pushNamedAndRemoveUntil(
+                          context,
+                          AppRouter.login,
+                          (route) => false,
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 36),
+                  const Center(
                     child: Text(
                       'Version 1.0.0',
                       style: TextStyle(color: AppColors.muted, fontSize: 14),

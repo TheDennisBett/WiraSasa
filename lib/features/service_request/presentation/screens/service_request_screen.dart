@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:wirasasa/app/app_providers.dart';
+import 'package:wirasasa/core/network/api_client.dart';
 import 'package:wirasasa/core/theme/app_colors.dart';
 import 'package:wirasasa/features/service_request/presentation/providers/booking_flow_provider.dart';
 import 'package:wirasasa/shared_widgets/primary_button.dart';
@@ -22,7 +24,19 @@ class _ServiceRequestScreenState extends ConsumerState<ServiceRequestScreen> {
     TimeOfDay(hour: 16, minute: 0),
   ];
 
+  late final TextEditingController _descriptionController;
+  late final TextEditingController _locationController;
   DateTime? _selectedSchedule;
+  bool _isSubmitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _descriptionController = TextEditingController(
+      text: 'Please help with the requested service.',
+    );
+    _locationController = TextEditingController(text: 'Westlands');
+  }
 
   @override
   void didChangeDependencies() {
@@ -31,12 +45,21 @@ class _ServiceRequestScreenState extends ConsumerState<ServiceRequestScreen> {
   }
 
   @override
+  void dispose() {
+    _descriptionController.dispose();
+    _locationController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final bookingFlow = ref.watch(bookingFlowProvider);
+    final session = ref.watch(authSessionProvider);
     final provider = bookingFlow.selectedProvider;
-    final serviceType = bookingFlow.serviceType;
+    final serviceCode = bookingFlow.serviceCode;
+    final serviceName = bookingFlow.serviceName;
 
-    if (provider == null || serviceType == null) {
+    if (provider == null || serviceCode == null || serviceName == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Schedule Service')),
         body: const Center(
@@ -51,11 +74,28 @@ class _ServiceRequestScreenState extends ConsumerState<ServiceRequestScreen> {
       );
     }
 
+    if (session == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Schedule Service')),
+        body: const Center(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Text(
+              'Sign in first before creating a service request.',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      );
+    }
+
     final effectiveSchedule = _selectedSchedule ?? bookingFlow.scheduledDateTime;
     final selectedDayKey = _dayKeyFor(effectiveSchedule);
     final selectedSlot = effectiveSchedule == null
         ? null
         : TimeOfDay.fromDateTime(effectiveSchedule);
+    final primaryService = provider.primaryService;
+    final request = bookingFlow.lastCreatedRequest;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Schedule Service')),
@@ -106,6 +146,32 @@ class _ServiceRequestScreenState extends ConsumerState<ServiceRequestScreen> {
             ),
           ),
           const SizedBox(height: 24),
+          const SectionHeader(title: 'Describe the job'),
+          const SizedBox(height: 12),
+          SurfaceCard(
+            child: Column(
+              children: [
+                TextField(
+                  controller: _descriptionController,
+                  minLines: 3,
+                  maxLines: 5,
+                  decoration: const InputDecoration(
+                    labelText: 'Description',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _locationController,
+                  decoration: const InputDecoration(
+                    labelText: 'Location label',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
           SurfaceCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -116,7 +182,7 @@ class _ServiceRequestScreenState extends ConsumerState<ServiceRequestScreen> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  '$serviceType • ${provider.name}',
+                  '$serviceName • ${provider.displayName}',
                   style: const TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w800,
@@ -131,7 +197,7 @@ class _ServiceRequestScreenState extends ConsumerState<ServiceRequestScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '${provider.distance} • KES${provider.pricePerHour}/hr',
+                  '${provider.distance} • ${primaryService?.currency ?? 'KES'}${primaryService?.basePrice.toStringAsFixed(0) ?? '--'}/${primaryService?.pricingUnit ?? 'job'}',
                   style: const TextStyle(
                     color: AppColors.green,
                     fontWeight: FontWeight.w700,
@@ -140,7 +206,7 @@ class _ServiceRequestScreenState extends ConsumerState<ServiceRequestScreen> {
               ],
             ),
           ),
-          if (bookingFlow.isConfirmed) ...[
+          if (request != null) ...[
             const SizedBox(height: 24),
             SurfaceCard(
               child: Column(
@@ -151,7 +217,7 @@ class _ServiceRequestScreenState extends ConsumerState<ServiceRequestScreen> {
                       Icon(Icons.check_circle_rounded, color: AppColors.green),
                       SizedBox(width: 8),
                       Text(
-                        'Confirmed',
+                        'Request Created',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w800,
@@ -161,31 +227,33 @@ class _ServiceRequestScreenState extends ConsumerState<ServiceRequestScreen> {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    '${provider.name} has been locked for ${bookingFlow.serviceType}.',
-                    style: const TextStyle(color: AppColors.slate, height: 1.35),
+                    'Request ID: ${request.id}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    effectiveSchedule == null
-                        ? 'Booking type: Instant'
-                        : 'Booking type: Scheduled for ${_formatSchedule(effectiveSchedule)}',
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+                    'Status: ${request.status}',
+                    style: const TextStyle(color: AppColors.slate),
                   ),
-                  if (bookingFlow.confirmedAt != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Confirmed at ${_formatSchedule(bookingFlow.confirmedAt!)}',
-                      style: const TextStyle(color: AppColors.muted),
-                    ),
-                  ],
+                  const SizedBox(height: 8),
+                  Text(
+                    request.scheduledAtUtc == null
+                        ? 'Booking type: Instant'
+                        : 'Booking type: Scheduled for ${_formatSchedule(request.scheduledAtUtc!.toLocal())}',
+                    style: const TextStyle(color: AppColors.slate),
+                  ),
                 ],
               ),
             ),
           ],
           const SizedBox(height: 24),
           PrimaryButton(
-            label: bookingFlow.isConfirmed ? 'Request Confirmed' : 'Confirm Request',
-            onPressed: bookingFlow.isConfirmed ? null : _confirmRequest,
+            label: _isSubmitting
+                ? 'Creating Request...'
+                : request == null
+                    ? 'Confirm Request'
+                    : 'Request Created',
+            onPressed: _isSubmitting || request != null ? null : _confirmRequest,
           ),
         ],
       ),
@@ -232,13 +300,55 @@ class _ServiceRequestScreenState extends ConsumerState<ServiceRequestScreen> {
     _selectDay(picked);
   }
 
-  void _confirmRequest() {
-    ref.read(bookingFlowProvider.notifier).confirmRequest();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Request confirmed with the selected provider.'),
-      ),
-    );
+  Future<void> _confirmRequest() async {
+    final bookingFlow = ref.read(bookingFlowProvider);
+    final session = ref.read(authSessionProvider);
+    final provider = bookingFlow.selectedProvider;
+    final serviceCode = bookingFlow.serviceCode;
+    final serviceName = bookingFlow.serviceName;
+    if (session == null ||
+        provider == null ||
+        serviceCode == null ||
+        serviceName == null) {
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+    try {
+      final created = await ref.read(serviceRequestsApiProvider).create(
+            bearerToken: session.accessToken,
+            serviceCode: serviceCode,
+            serviceName: serviceName,
+            description: _descriptionController.text.trim(),
+            locationLabel: _locationController.text.trim(),
+            latitude: provider.latitude,
+            longitude: provider.longitude,
+            scheduledAtUtc: (_selectedSchedule ?? bookingFlow.scheduledDateTime)
+                ?.toUtc(),
+            budgetAmount:
+                provider.primaryService?.basePrice ?? bookingFlow.lastCreatedRequest?.budgetAmount ?? 0,
+            currency: provider.primaryService?.currency ?? 'KES',
+            providerId: provider.id,
+          );
+      ref.read(bookingFlowProvider.notifier).setCreatedRequest(created);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Request ${created.id} created successfully.')),
+      );
+    } on ApiException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
   }
 }
 

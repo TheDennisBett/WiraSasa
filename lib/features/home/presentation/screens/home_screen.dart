@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:wirasasa/app/app_providers.dart';
 import 'package:wirasasa/app/app_router.dart';
+import 'package:wirasasa/core/network/api_client.dart';
+import 'package:wirasasa/core/network/api_models.dart';
 import 'package:wirasasa/core/theme/app_colors.dart';
-import 'package:wirasasa/core/utils/mock_data.dart';
 import 'package:wirasasa/features/home/presentation/providers/schedule_provider.dart';
 import 'package:wirasasa/features/map_discovery/presentation/models/map_discovery_arguments.dart';
 import 'package:wirasasa/features/service_request/presentation/providers/booking_flow_provider.dart';
@@ -16,12 +18,14 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   late final TextEditingController _searchController;
+  late Future<List<ServiceCategory>> _servicesFuture;
   String _query = '';
 
   @override
   void initState() {
     super.initState();
     _searchController = TextEditingController();
+    _servicesFuture = ref.read(catalogApiProvider).getServices();
   }
 
   @override
@@ -33,141 +37,172 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final scheduleState = ref.watch(scheduleProvider);
-    final grouped = <String, List<ServiceCategory>>{};
-    for (final category in MockData.categories) {
-      grouped.putIfAbsent(category.group, () => []).add(category);
-    }
-
-    final results = MockData.searchCategories(_query);
-    final isSearching = _query.trim().isNotEmpty;
-
     return Scaffold(
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
-          children: [
-            _SearchBar(
-              controller: _searchController,
-              isScheduled: scheduleState.isScheduledBooking,
-              scheduledTime: scheduleState.scheduledTime,
-              onChanged: (value) => setState(() => _query = value),
-              onSubmitted: (value) {
-                final matches = MockData.searchCategories(value);
-                if (matches.isNotEmpty) {
-                  final match = matches.first;
-                  _openService(match.name);
-                }
-              },
-              onLaterTap: _openSchedulingModal,
-            ),
-            if (scheduleState.isScheduledBooking &&
-                scheduleState.scheduledTime != null) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
+        child: FutureBuilder<List<ServiceCategory>>(
+          future: _servicesFuture,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              final error = snapshot.error;
+              final message = error is ApiException
+                  ? error.message
+                  : 'Failed to load services.';
+              return _LoadErrorState(
+                message: message,
+                onRetry: () {
+                  setState(() {
+                    _servicesFuture = ref.read(catalogApiProvider).getServices();
+                  });
+                },
+              );
+            }
+
+            final services = snapshot.data ?? const <ServiceCategory>[];
+            final grouped = <String, List<ServiceCategory>>{};
+            for (final category in services) {
+              grouped.putIfAbsent(category.group, () => []).add(category);
+            }
+
+            final normalizedQuery = _query.trim().toLowerCase();
+            final results = normalizedQuery.isEmpty
+                ? services
+                : services.where((category) {
+                    return category.name.toLowerCase().contains(normalizedQuery) ||
+                        category.group.toLowerCase().contains(normalizedQuery) ||
+                        category.code.toLowerCase().contains(normalizedQuery);
+                  }).toList();
+            final isSearching = normalizedQuery.isNotEmpty;
+            final recentServices = services.take(2).toList();
+
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+              children: [
+                _SearchBar(
+                  controller: _searchController,
+                  isScheduled: scheduleState.isScheduledBooking,
+                  scheduledTime: scheduleState.scheduledTime,
+                  onChanged: (value) => setState(() => _query = value),
+                  onSubmitted: (value) {
+                    final match = results.isNotEmpty ? results.first : null;
+                    if (match != null) {
+                      _openService(match);
+                    }
+                  },
+                  onLaterTap: _openSchedulingModal,
                 ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEFFFF4),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.schedule_rounded, color: AppColors.green),
-                    const SizedBox(width: 10),
-                    Expanded(
+                if (scheduleState.isScheduledBooking &&
+                    scheduleState.scheduledTime != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEFFFF4),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.schedule_rounded, color: AppColors.green),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Scheduled for ${_formatDateTime(scheduleState.scheduledTime!)}',
+                            style: const TextStyle(
+                              color: AppColors.ink,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 18),
+                if (isSearching) ...[
+                  const Text(
+                    'Search results',
+                    style: TextStyle(
+                      color: AppColors.green,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (results.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 28),
                       child: Text(
-                        'Scheduled for ${_formatDateTime(scheduleState.scheduledTime!)}',
-                        style: const TextStyle(
-                          color: AppColors.ink,
-                          fontWeight: FontWeight.w600,
+                        'No services found from the catalog response.',
+                        style: TextStyle(color: AppColors.muted),
+                      ),
+                    )
+                  else
+                    ...results.map(
+                      (category) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _RecentServiceTile(
+                          category: category,
+                          onTap: () => _openService(category),
                         ),
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ],
-            const SizedBox(height: 18),
-            if (isSearching) ...[
-              const Text(
-                'Search results',
-                style: TextStyle(
-                  color: AppColors.green,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (results.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 28),
-                  child: Text(
-                    'No services found. Try electrician, plumber, mechanic, or gardener.',
-                    style: TextStyle(color: AppColors.muted),
-                  ),
-                )
-              else
-                ...results.map(
-                  (category) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: _RecentServiceTile(
-                      category: category,
-                      onTap: () => _openService(category.name),
+                ] else ...[
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF6F7FA),
+                      borderRadius: BorderRadius.circular(22),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Recent Services',
+                          style: TextStyle(
+                            color: AppColors.green,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        ...recentServices.map(
+                          (service) => Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: _RecentServiceTile(
+                              category: service,
+                              onTap: () => _openService(service),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-            ] else ...[
-              Container(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF6F7FA),
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Recent Services',
-                      style: TextStyle(
+                  const SizedBox(height: 24),
+                  for (final entry in grouped.entries) ...[
+                    Text(
+                      entry.key,
+                      style: const TextStyle(
                         color: AppColors.green,
-                        fontSize: 14,
+                        fontSize: 18,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 12),
-                    ...MockData.recentServices.map(
-                      (serviceName) => Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: _RecentServiceTile(
-                          category: MockData.findCategoryByName(serviceName)!,
-                          onTap: () => _openService(serviceName),
-                        ),
-                      ),
+                    _CategoryGrid(
+                      categories: entry.value,
+                      onTap: _openService,
                     ),
+                    const SizedBox(height: 18),
                   ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              for (final entry in grouped.entries) ...[
-                Text(
-                  entry.key,
-                  style: const TextStyle(
-                    color: AppColors.green,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _CategoryGrid(
-                  categories: entry.value,
-                  onTap: (category) => _openService(category.name),
-                ),
-                const SizedBox(height: 18),
+                ],
               ],
-            ],
-          ],
+            );
+          },
         ),
       ),
     );
@@ -216,9 +251,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             context: context,
                             initialDate: selectedDate,
                             firstDate: DateTime.now(),
-                            lastDate: DateTime.now().add(
-                              const Duration(days: 365),
-                            ),
+                            lastDate: DateTime.now().add(const Duration(days: 365)),
                           );
                           if (picked != null) {
                             setModalState(() => selectedDate = picked);
@@ -285,10 +318,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
-                          ),
-                          const Icon(
-                            Icons.timelapse_rounded,
-                            color: Colors.white,
                           ),
                         ],
                       ),
@@ -363,12 +392,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  void _openService(String serviceType) {
+  void _openService(ServiceCategory service) {
     final scheduleState = ref.read(scheduleProvider);
     ref
         .read(bookingFlowProvider.notifier)
         .startFlow(
-          serviceType: serviceType,
+          serviceCode: service.code,
+          serviceName: service.name,
           scheduledDateTime: scheduleState.isScheduledBooking
               ? scheduleState.scheduledTime
               : null,
@@ -377,11 +407,39 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       context,
       AppRouter.mapDiscovery,
       arguments: MapDiscoveryArguments(
-        serviceType: serviceType,
+        serviceCode: service.code,
+        serviceName: service.name,
         scheduledDateTime: scheduleState.isScheduledBooking
             ? scheduleState.scheduledTime
             : null,
-        initialQuery: _query.isEmpty ? serviceType : _query,
+        initialQuery: _query.isEmpty ? service.name : _query,
+      ),
+    );
+  }
+}
+
+class _LoadErrorState extends StatelessWidget {
+  const _LoadErrorState({
+    required this.message,
+    required this.onRetry,
+  });
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(message, textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            FilledButton(onPressed: onRetry, child: const Text('Retry')),
+          ],
+        ),
       ),
     );
   }
@@ -470,21 +528,21 @@ class _RecentServiceTile extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(18),
         child: Container(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            border: Border.all(color: AppColors.line),
             borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AppColors.line),
           ),
           child: Row(
             children: [
               Container(
-                width: 44,
-                height: 44,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFDDFBE7),
-                  shape: BoxShape.circle,
+                width: 54,
+                height: 54,
+                decoration: BoxDecoration(
+                  color: category.color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                child: Icon(category.icon, color: AppColors.green),
+                child: Icon(category.icon, color: category.color, size: 28),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -494,22 +552,22 @@ class _RecentServiceTile extends StatelessWidget {
                     Text(
                       category.name,
                       style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 6),
                     Text(
                       category.description,
                       style: const TextStyle(
                         color: AppColors.muted,
                         fontSize: 14,
-                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
                 ),
               ),
+              const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
             ],
           ),
         ),
@@ -531,32 +589,47 @@ class _CategoryGrid extends StatelessWidget {
       runSpacing: 12,
       children: categories.map((category) {
         final isWide = categories.length == 1;
-        return GestureDetector(
-          onTap: () => onTap(category),
-          child: Container(
-            width: isWide
-                ? MediaQuery.of(context).size.width - 40
-                : (MediaQuery.of(context).size.width - 52) / 2,
-            height: 106,
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: category.color,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(category.icon, color: Colors.white, size: 30),
-                const Spacer(),
-                Text(
-                  category.name,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
+        return SizedBox(
+          width: isWide
+              ? MediaQuery.of(context).size.width - 40
+              : (MediaQuery.of(context).size.width - 52) / 2,
+          child: InkWell(
+            onTap: () => onTap(category),
+            borderRadius: BorderRadius.circular(24),
+            child: Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: AppColors.line),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 58,
+                    height: 58,
+                    decoration: BoxDecoration(
+                      color: category.color.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: Icon(category.icon, color: category.color, size: 30),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 16),
+                  Text(
+                    category.name,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    category.description,
+                    style: const TextStyle(color: AppColors.muted, height: 1.35),
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -565,43 +638,17 @@ class _CategoryGrid extends StatelessWidget {
   }
 }
 
-String _formatDateTime(DateTime value) {
-  return '${_formatDate(value)} • ${_formatTime(TimeOfDay.fromDateTime(value))}';
-}
-
-String _formatShortDateTime(DateTime value) {
-  final today = DateUtils.dateOnly(DateTime.now());
-  final tomorrow = today.add(const Duration(days: 1));
-  final target = DateUtils.dateOnly(value);
-  final dayText = target == today
-      ? 'Today'
-      : target == tomorrow
-      ? 'Tomorrow'
-      : _formatDate(value);
-  return '$dayText ${_formatTime(TimeOfDay.fromDateTime(value))}';
-}
-
-String _formatDate(DateTime value) {
-  const months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-  return '${months[value.month - 1]} ${value.day}, ${value.year}';
-}
-
 String _formatTime(TimeOfDay value) {
   final hour = value.hourOfPeriod == 0 ? 12 : value.hourOfPeriod;
   final minute = value.minute.toString().padLeft(2, '0');
   final period = value.period == DayPeriod.am ? 'AM' : 'PM';
   return '$hour:$minute $period';
+}
+
+String _formatDateTime(DateTime value) {
+  return '${value.day}/${value.month}/${value.year} • ${_formatTime(TimeOfDay.fromDateTime(value))}';
+}
+
+String _formatShortDateTime(DateTime value) {
+  return '${value.day}/${value.month} ${_formatTime(TimeOfDay.fromDateTime(value))}';
 }

@@ -1,11 +1,13 @@
 class MapDiscoveryArguments {
   const MapDiscoveryArguments({
-    required this.serviceType,
+    required this.serviceCode,
+    required this.serviceName,
     this.scheduledDateTime,
     this.initialQuery,
   });
 
-  final String serviceType;
+  final String serviceCode;
+  final String serviceName;
   final DateTime? scheduledDateTime;
   final String? initialQuery;
 

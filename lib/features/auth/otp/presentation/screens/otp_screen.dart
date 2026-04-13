@@ -1,13 +1,41 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:wirasasa/app/app_providers.dart';
 import 'package:wirasasa/app/app_router.dart';
+import 'package:wirasasa/core/config/app_env.dart';
+import 'package:wirasasa/core/network/api_client.dart';
 import 'package:wirasasa/core/theme/app_colors.dart';
+import 'package:wirasasa/features/auth/otp/presentation/models/otp_screen_arguments.dart';
 
-class OtpScreen extends StatelessWidget {
-  const OtpScreen({super.key});
+class OtpScreen extends ConsumerStatefulWidget {
+  const OtpScreen({super.key, this.arguments});
+
+  final OtpScreenArguments? arguments;
+
+  @override
+  ConsumerState<OtpScreen> createState() => _OtpScreenState();
+}
+
+class _OtpScreenState extends ConsumerState<OtpScreen> {
+  final TextEditingController _codeController = TextEditingController();
+  bool _isSubmitting = false;
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final args = widget.arguments;
     final theme = Theme.of(context);
+    if (args == null) {
+      return const Scaffold(
+        body: Center(child: Text('OTP challenge was not provided.')),
+      );
+    }
+
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -55,62 +83,76 @@ class OtpScreen extends StatelessWidget {
               const SizedBox(height: 60),
               Text('Verify your number', style: theme.textTheme.headlineMedium),
               const SizedBox(height: 10),
-              const Text(
-                'Enter the 6-digit code sent to 65636362727',
-                style: TextStyle(color: AppColors.muted, fontSize: 16),
+              Text(
+                'Enter the 6-digit code sent to ${args.phoneNumber}',
+                style: const TextStyle(color: AppColors.muted, fontSize: 16),
               ),
+              if (AppEnv.showDevOtp && args.devOtpCode != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'Dev OTP: ${args.devOtpCode}',
+                  style: const TextStyle(
+                    color: AppColors.green,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
               const SizedBox(height: 36),
-              const Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  _OtpDigit(value: '1'),
-                  _OtpDigit(value: '2'),
-                  _OtpDigit(value: '3'),
-                  _OtpDigit(value: '3'),
-                  _OtpDigit(value: '4'),
-                  _OtpDigit(value: '4', active: true),
-                ],
+              TextField(
+                controller: _codeController,
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                decoration: const InputDecoration(
+                  labelText: 'OTP code',
+                  border: OutlineInputBorder(),
+                ),
               ),
-              const SizedBox(height: 42),
+              const SizedBox(height: 28),
               SizedBox(
                 width: double.infinity,
                 height: 70,
                 child: FilledButton(
-                  onPressed: () => Navigator.pushNamedAndRemoveUntil(
-                    context,
-                    AppRouter.shell,
-                    (route) => false,
-                  ),
+                  onPressed: _isSubmitting ? null : () => _verify(args),
                   style: FilledButton.styleFrom(
                     backgroundColor: AppColors.green,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
                     ),
                   ),
-                  child: const Text(
-                    'Verify',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                  child: Text(
+                    _isSubmitting ? 'Verifying...' : 'Verify',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ),
               const SizedBox(height: 26),
-              const Row(
+              Row(
                 children: [
-                  Text(
-                    'Resend code',
-                    style: TextStyle(
-                      color: AppColors.green,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
+                  TextButton(
+                    onPressed: _isSubmitting ? null : () => _resend(args),
+                    child: const Text(
+                      'Resend code',
+                      style: TextStyle(
+                        color: AppColors.green,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
-                  Spacer(),
-                  Text(
-                    'Change number',
-                    style: TextStyle(
-                      color: AppColors.slate,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text(
+                      'Change number',
+                      style: TextStyle(
+                        color: AppColors.slate,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ],
@@ -121,32 +163,73 @@ class OtpScreen extends StatelessWidget {
       ),
     );
   }
-}
 
-class _OtpDigit extends StatelessWidget {
-  const _OtpDigit({required this.value, this.active = false});
+  Future<void> _verify(OtpScreenArguments args) async {
+    if (_codeController.text.trim().length != 6) {
+      _showMessage('Enter the 6-digit OTP code.');
+      return;
+    }
+    setState(() => _isSubmitting = true);
+    try {
+      final session = await ref
+          .read(authApiProvider)
+          .verifyOtp(
+            challengeId: args.challengeId,
+            code: _codeController.text.trim(),
+            requestedRole: args.requestedRole,
+            displayName: args.displayName,
+          );
+      ref.read(authSessionProvider.notifier).setSession(session);
+      if (!mounted) {
+        return;
+      }
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        AppRouter.shell,
+        (route) => false,
+      );
+    } on ApiException catch (error) {
+      _showMessage(error.message);
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
 
-  final String value;
-  final bool active;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 56,
-      height: 72,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: const Color(0xFFF3F3F6),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: active ? Colors.black38 : Colors.transparent,
-          width: active ? 2 : 1,
+  Future<void> _resend(OtpScreenArguments args) async {
+    try {
+      final challenge = await ref
+          .read(authApiProvider)
+          .sendOtp(
+            phoneNumber: args.phoneNumber,
+            requestedRole: args.requestedRole,
+          );
+      if (!mounted) {
+        return;
+      }
+      Navigator.pushReplacementNamed(
+        context,
+        AppRouter.otp,
+        arguments: OtpScreenArguments(
+          challengeId: challenge.challengeId,
+          phoneNumber: challenge.phoneNumber,
+          requestedRole: args.requestedRole,
+          displayName: args.displayName,
+          devOtpCode: challenge.devOtpCode,
         ),
-      ),
-      child: Text(
-        value,
-        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-      ),
-    );
+      );
+    } on ApiException catch (error) {
+      _showMessage(error.message);
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 }

@@ -1,9 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wirasasa/app/app_router.dart';
 import 'package:wirasasa/core/theme/app_colors.dart';
+import 'package:wirasasa/features/auth/create_account/presentation/models/create_account_arguments.dart';
 
-class LoginScreen extends StatelessWidget {
+class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
+
+  @override
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends ConsumerState<LoginScreen> {
+  final TextEditingController _identifierController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  bool _isSubmitting = false;
+
+  @override
+  void dispose() {
+    _identifierController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -68,126 +86,146 @@ class LoginScreen extends StatelessWidget {
             ),
             const _StepTile(index: '4', label: 'Request service instantly'),
             const SizedBox(height: 36),
-            Text('Enter mobile number', style: theme.textTheme.headlineMedium),
+            Text(
+              'Enter Email Address or Username',
+              style: theme.textTheme.headlineMedium,
+            ),
             const SizedBox(height: 22),
-            _FieldShell(
-              child: Row(
-                children: const [
-                  Expanded(
-                    child: Text(
-                      'Kenya',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    color: AppColors.muted,
-                  ),
-                ],
-              ),
+            _AuthField(
+              controller: _identifierController,
+              label: 'Email address Or Username',
+              hintText: 'Enter email or Address',
+              keyboardType: TextInputType.emailAddress,
             ),
             const SizedBox(height: 16),
-            Row(
-              children: const [
-                SizedBox(
-                  width: 102,
-                  child: _FieldShell(
-                    child: Center(
-                      child: Text(
-                        '+254',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                SizedBox(width: 14),
-                Expanded(child: _PhoneField()),
-              ],
+            _AuthField(
+              controller: _passwordController,
+              label: 'Password',
+              hintText: 'Enter password',
+              obscureText: true,
             ),
             const SizedBox(height: 24),
             SizedBox(
               height: 70,
               child: FilledButton(
-                onPressed: () => Navigator.pushNamed(context, AppRouter.otp),
+                onPressed: _isSubmitting ? null : _openTokenDeliveryOptions,
                 style: FilledButton.styleFrom(
                   backgroundColor: AppColors.green,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                child: const Text(
-                  'Sign In',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                child: Text(
+                  _isSubmitting ? 'Sending Token...' : 'Send Token',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),
-            const SizedBox(height: 28),
-            Row(
-              children: const [
-                Expanded(child: Divider()),
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(
-                    'or',
-                    style: TextStyle(
-                      color: AppColors.muted,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-                Expanded(child: Divider()),
-              ],
-            ),
-            const SizedBox(height: 28),
-            _SocialButton(
-              icon: Icons.g_mobiledata_rounded,
-              label: 'Sign in with Google',
-              onTap: () =>
-                  Navigator.pushReplacementNamed(context, AppRouter.shell),
-            ),
-            const SizedBox(height: 14),
-            _SocialButton(
-              icon: Icons.facebook_rounded,
-              label: 'Sign in with Facebook',
-              onTap: () =>
-                  Navigator.pushReplacementNamed(context, AppRouter.shell),
-            ),
-            const SizedBox(height: 28),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: const [
-                Text(
-                  'New here? ',
-                  style: TextStyle(color: AppColors.muted, fontSize: 16),
-                ),
-                Text(
-                  'Create an account',
+            const SizedBox(height: 16),
+            Center(
+              child: TextButton(
+                onPressed: () =>
+                    Navigator.pushNamed(context, AppRouter.forgotPassword),
+                child: const Text(
+                  'Forgot password',
                   style: TextStyle(
                     color: AppColors.green,
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-              ],
+              ),
             ),
             const SizedBox(height: 28),
-            const Text(
-              'By continuing, you agree to our Terms of Service and Privacy Policy',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.muted, height: 1.4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text(
+                  'New here? ',
+                  style: TextStyle(color: AppColors.muted, fontSize: 16),
+                ),
+                GestureDetector(
+                  onTap: _openCreateAccount,
+                  child: const Text(
+                    'Create Account',
+                    style: TextStyle(
+                      color: AppColors.green,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
       ),
     );
   }
+
+  Future<void> _openTokenDeliveryOptions() async {
+    final identifier = _identifierController.text.trim();
+    final password = _passwordController.text;
+
+    if (identifier.isEmpty) {
+      _showMessage('Enter email address or username.');
+      return;
+    }
+    if (password.trim().isEmpty) {
+      _showMessage('Enter your password.');
+      return;
+    }
+
+    final channel = await showDialog<_OtpDeliveryChannel>(
+      context: context,
+      builder: (context) => const _OtpDeliveryDialog(),
+    );
+    if (channel == null || !mounted) {
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (!mounted) {
+      return;
+    }
+    setState(() => _isSubmitting = false);
+    _showMessage(
+      'Token delivery by ${channel.label} will be connected to the backend next.',
+    );
+  }
+
+  Future<void> _openCreateAccount({String? prefilledPhone}) async {
+    final result = await Navigator.pushNamed(
+      context,
+      AppRouter.createAccount,
+      arguments: CreateAccountArguments(phoneNumber: prefilledPhone),
+    );
+    if (result is String) {
+      _identifierController.text = result;
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+enum _OtpDeliveryChannel {
+  sms('SMS'),
+  email('email');
+
+  const _OtpDeliveryChannel(this.label);
+
+  final String label;
 }
 
 class _StepTile extends StatelessWidget {
@@ -228,75 +266,141 @@ class _StepTile extends StatelessWidget {
   }
 }
 
-class _FieldShell extends StatelessWidget {
-  const _FieldShell({required this.child});
+class _AuthField extends StatelessWidget {
+  const _AuthField({
+    required this.controller,
+    required this.label,
+    required this.hintText,
+    this.keyboardType,
+    this.obscureText = false,
+  });
 
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 72,
-      padding: const EdgeInsets.symmetric(horizontal: 18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: AppColors.line),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: child,
-    );
-  }
-}
-
-class _PhoneField extends StatelessWidget {
-  const _PhoneField();
+  final TextEditingController controller;
+  final String label;
+  final String hintText;
+  final TextInputType? keyboardType;
+  final bool obscureText;
 
   @override
   Widget build(BuildContext context) {
     return TextField(
-      keyboardType: TextInputType.phone,
+      controller: controller,
+      keyboardType: keyboardType,
+      obscureText: obscureText,
       decoration: InputDecoration(
-        hintText: 'Phone number',
+        labelText: label,
+        hintText: hintText,
         filled: true,
-        fillColor: const Color(0xFFF5F5F8),
+        fillColor: Colors.white,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 18,
+          vertical: 22,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide.none,
+          borderSide: const BorderSide(color: AppColors.line),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: AppColors.line),
         ),
       ),
     );
   }
 }
 
-class _SocialButton extends StatelessWidget {
-  const _SocialButton({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
+class _OtpDeliveryDialog extends StatefulWidget {
+  const _OtpDeliveryDialog();
 
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
+  @override
+  State<_OtpDeliveryDialog> createState() => _OtpDeliveryDialogState();
+}
+
+class _OtpDeliveryDialogState extends State<_OtpDeliveryDialog> {
+  _OtpDeliveryChannel _selectedChannel = _OtpDeliveryChannel.email;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 70,
-      child: OutlinedButton.icon(
-        onPressed: onTap,
-        style: OutlinedButton.styleFrom(
-          side: const BorderSide(color: AppColors.line),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-        icon: Icon(icon, size: icon == Icons.g_mobiledata_rounded ? 34 : 24),
-        label: Text(
-          label,
-          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Select how you would like to receive the Login Otp.',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 18),
+            _DeliveryOptionTile(
+              label: 'Send via Sms',
+              value: _OtpDeliveryChannel.sms,
+              groupValue: _selectedChannel,
+              onChanged: _setSelectedChannel,
+            ),
+            const Divider(height: 1),
+            _DeliveryOptionTile(
+              label: 'Send via email',
+              value: _OtpDeliveryChannel.email,
+              groupValue: _selectedChannel,
+              onChanged: _setSelectedChannel,
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: FilledButton(
+                onPressed: () => Navigator.pop(context, _selectedChannel),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.green,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text('Send OTP'),
+              ),
+            ),
+          ],
         ),
       ),
+    );
+  }
+
+  void _setSelectedChannel(_OtpDeliveryChannel? value) {
+    if (value == null) {
+      return;
+    }
+    setState(() => _selectedChannel = value);
+  }
+}
+
+class _DeliveryOptionTile extends StatelessWidget {
+  const _DeliveryOptionTile({
+    required this.label,
+    required this.value,
+    required this.groupValue,
+    required this.onChanged,
+  });
+
+  final String label;
+  final _OtpDeliveryChannel value;
+  final _OtpDeliveryChannel groupValue;
+  final ValueChanged<_OtpDeliveryChannel?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      title: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+      trailing: Icon(
+        value == groupValue
+            ? Icons.radio_button_checked
+            : Icons.radio_button_unchecked,
+        color: value == groupValue ? AppColors.green : AppColors.muted,
+      ),
+      onTap: () => onChanged(value),
     );
   }
 }

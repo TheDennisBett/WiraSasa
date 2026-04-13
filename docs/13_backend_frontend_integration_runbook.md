@@ -55,6 +55,18 @@ class AppEnv {
 
 Then every API client should read from `AppEnv.apiBaseUrl`.
 
+The Flutter client also supports a local-development OTP display switch:
+
+```text
+WIRASASA_SHOW_DEV_OTP
+```
+
+Keep this unset or `false` outside local development. The OTP screen only displays backend `devOtpCode` values when the app is launched with:
+
+```bash
+--dart-define=WIRASASA_SHOW_DEV_OTP=true
+```
+
 ## 3. Correct Base URL By Platform
 
 ### Flutter Web on the same machine
@@ -69,6 +81,8 @@ Run:
 cd /home/bett/Wirasasa
 flutter run -d chrome --dart-define=WIRASASA_API_BASE_URL=http://127.0.0.1:5098
 ```
+
+For Flutter Web, the .NET API must allow the Flutter origin with a scoped CORS policy. Do not use an unrestricted production CORS policy.
 
 ### Android emulator
 
@@ -229,6 +243,26 @@ class ApiClient {
 
 Map the current Flutter screens to the backend like this:
 
+Current frontend API wrappers:
+
+```text
+lib/core/network/api_client.dart
+lib/features/auth/data/auth_api.dart
+lib/features/home/data/catalog_api.dart
+lib/features/providers/data/providers_api.dart
+lib/features/service_request/data/service_requests_api.dart
+lib/features/tracking/data/tracking_api.dart
+lib/features/payments/data/payments_api.dart
+```
+
+Security rules enforced in the Flutter integration:
+
+- protected calls require the bearer access token from `authSessionProvider`
+- request status and payment state are read from backend responses, not local assumptions
+- access and refresh tokens are kept in memory in this pass; do not write them to logs or plain text storage
+- local-development OTP display is disabled unless `WIRASASA_SHOW_DEV_OTP=true`
+- the API client applies a request timeout and maps backend problem responses to `ApiException`
+
 ### Login screen
 
 File now:
@@ -238,16 +272,18 @@ File now:
 Use:
 
 - `POST /api/auth/check-user`
-- `POST /api/auth/register` when `nextAction == createAccount`
+- `POST /api/auth/register-account` from the dedicated create-account screen
 - `POST /api/auth/send-otp`
 
 Recommended flow:
 
 1. user enters phone number
 2. call `check-user`
-3. if new user, collect display name and call `register`
-4. call `send-otp`
-5. navigate to OTP screen
+3. if `nextAction == createAccount`, navigate to the create-account screen
+4. submit `firstName`, `lastName`, `email`, `password`, `phoneNumber`, and `requestedRole` to `register-account`
+5. return to login with the phone number prefilled
+6. call `send-otp`
+7. navigate to OTP screen
 
 ### OTP screen
 
@@ -328,7 +364,7 @@ Use this exact sequence once the frontend starts calling the backend:
 2. Start Flutter with `--dart-define=WIRASASA_API_BASE_URL=<correct-url-for-platform>`.
 3. Enter a new phone number on the login screen.
 4. Call `check-user`.
-5. If new, call `register`.
+5. If new, call `register-account`.
 6. Call `send-otp`.
 7. On OTP screen, call `verify-otp`.
 8. Load service categories from `GET /api/catalog/services`.
@@ -381,7 +417,7 @@ ASPNETCORE_URLS=http://0.0.0.0:5098 dotnet run --no-launch-profile --project src
 ```bash
 cd /home/bett/Wirasasa
 flutter pub add http
-flutter run -d chrome --dart-define=WIRASASA_API_BASE_URL=http://127.0.0.1:5098
+flutter run -d chrome --dart-define=WIRASASA_API_BASE_URL=http://127.0.0.1:5098 --dart-define=WIRASASA_SHOW_DEV_OTP=true
 ```
 
 ### Android Emulator
@@ -389,7 +425,7 @@ flutter run -d chrome --dart-define=WIRASASA_API_BASE_URL=http://127.0.0.1:5098
 ```bash
 cd /home/bett/Wirasasa
 flutter pub add http
-flutter run -d emulator-5554 --dart-define=WIRASASA_API_BASE_URL=http://10.0.2.2:5098
+flutter run -d emulator-5554 --dart-define=WIRASASA_API_BASE_URL=http://10.0.2.2:5098 --dart-define=WIRASASA_SHOW_DEV_OTP=true
 ```
 
 ### iOS Simulator
@@ -397,5 +433,5 @@ flutter run -d emulator-5554 --dart-define=WIRASASA_API_BASE_URL=http://10.0.2.2
 ```bash
 cd /home/bett/Wirasasa
 flutter pub add http
-flutter run -d ios --dart-define=WIRASASA_API_BASE_URL=http://127.0.0.1:5098
+flutter run -d ios --dart-define=WIRASASA_API_BASE_URL=http://127.0.0.1:5098 --dart-define=WIRASASA_SHOW_DEV_OTP=true
 ```
