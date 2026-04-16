@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:wirasasa/app/app_providers.dart';
 import 'package:wirasasa/app/app_router.dart';
+import 'package:wirasasa/core/network/api_client.dart';
 import 'package:wirasasa/core/theme/app_colors.dart';
 import 'package:wirasasa/features/auth/create_account/presentation/models/create_account_arguments.dart';
+import 'package:wirasasa/features/auth/otp/presentation/models/otp_screen_arguments.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -168,14 +171,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> _openTokenDeliveryOptions() async {
     final identifier = _identifierController.text.trim();
-    final password = _passwordController.text;
 
     if (identifier.isEmpty) {
       _showMessage('Enter email address or username.');
-      return;
-    }
-    if (password.trim().isEmpty) {
-      _showMessage('Enter your password.');
       return;
     }
 
@@ -188,14 +186,37 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
 
     setState(() => _isSubmitting = true);
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-    if (!mounted) {
-      return;
+    try {
+      final challenge = await ref
+          .read(authApiProvider)
+          .sendOtp(
+            identifier: identifier,
+            channel: channel.name,
+            requestedRole: 'client',
+          );
+      if (!mounted) {
+        return;
+      }
+      Navigator.pushNamed(
+        context,
+        AppRouter.otp,
+        arguments: OtpScreenArguments(
+          challengeId: challenge.challengeId,
+          phoneNumber: challenge.phoneNumber,
+          identifier: identifier,
+          channel: challenge.channel ?? channel.name,
+          requestedRole: 'client',
+          devOtpCode: challenge.devOtpCode,
+          maskedDestination: challenge.maskedDestination,
+        ),
+      );
+    } on ApiException catch (error) {
+      _showMessage(error.message);
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
     }
-    setState(() => _isSubmitting = false);
-    _showMessage(
-      'Token delivery by ${channel.label} will be connected to the backend next.',
-    );
   }
 
   Future<void> _openCreateAccount({String? prefilledPhone}) async {

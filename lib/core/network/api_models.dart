@@ -104,6 +104,8 @@ class OtpChallenge {
     required this.isExistingUser,
     required this.nextAction,
     required this.devOtpCode,
+    this.channel,
+    this.maskedDestination,
   });
 
   final String challengeId;
@@ -112,15 +114,27 @@ class OtpChallenge {
   final bool isExistingUser;
   final String nextAction;
   final String? devOtpCode;
+  final String? channel;
+  final String? maskedDestination;
+
+  String get destination {
+    final masked = maskedDestination?.trim();
+    if (masked != null && masked.isNotEmpty) {
+      return masked;
+    }
+    return phoneNumber;
+  }
 
   factory OtpChallenge.fromJson(Map<String, dynamic> json) {
     return OtpChallenge(
       challengeId: json['challengeId'] as String,
-      phoneNumber: json['phoneNumber'] as String,
-      expiresInSeconds: json['expiresInSeconds'] as int,
-      isExistingUser: json['isExistingUser'] as bool,
-      nextAction: json['nextAction'] as String,
+      phoneNumber: json['phoneNumber'] as String? ?? '',
+      expiresInSeconds: json['expiresInSeconds'] as int? ?? 0,
+      isExistingUser: json['isExistingUser'] as bool? ?? false,
+      nextAction: json['nextAction'] as String? ?? '',
       devOtpCode: json['devOtpCode'] as String?,
+      channel: json['channel'] as String?,
+      maskedDestination: json['maskedDestination'] as String?,
     );
   }
 }

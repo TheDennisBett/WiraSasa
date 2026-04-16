@@ -50,6 +50,48 @@ void main() {
   });
 
   test(
+    'sendOtp posts identifier channel contract and maps email challenge',
+    () async {
+      final authApi = AuthApi(
+        ApiClient(
+          httpClient: MockClient((request) async {
+            expect(request.method, 'POST');
+            expect(request.url.path, '/api/auth/send-otp');
+            expect(jsonDecode(request.body), {
+              'identifier': 'bettict1@gmail.com',
+              'channel': 'email',
+              'requestedRole': 'client',
+            });
+            return http.Response(
+              jsonEncode({
+                'challengeId': 'otp_4f9f9ad8aef14272bf2764c24ee8caeb',
+                'phoneNumber': '',
+                'expiresInSeconds': 120,
+                'isExistingUser': true,
+                'nextAction': 'signIn',
+                'devOtpCode': 'K5QE5',
+                'channel': 'email',
+                'maskedDestination': 'be***@gmail.com',
+              }),
+              200,
+            );
+          }),
+        ),
+      );
+
+      final challenge = await authApi.sendOtp(
+        identifier: 'bettict1@gmail.com',
+        channel: 'email',
+        requestedRole: 'client',
+      );
+
+      expect(challenge.challengeId, 'otp_4f9f9ad8aef14272bf2764c24ee8caeb');
+      expect(challenge.devOtpCode, 'K5QE5');
+      expect(challenge.destination, 'be***@gmail.com');
+    },
+  );
+
+  test(
     'tracking API maps job tracking and provider location endpoints',
     () async {
       final trackingApi = TrackingApi(

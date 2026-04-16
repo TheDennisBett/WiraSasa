@@ -81,10 +81,10 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                 ],
               ),
               const SizedBox(height: 60),
-              Text('Verify your number', style: theme.textTheme.headlineMedium),
+              Text('Verify your OTP', style: theme.textTheme.headlineMedium),
               const SizedBox(height: 10),
               Text(
-                'Enter the 6-digit code sent to ${args.phoneNumber}',
+                'Enter the code sent to ${args.destination}',
                 style: const TextStyle(color: AppColors.muted, fontSize: 16),
               ),
               if (AppEnv.showDevOtp && args.devOtpCode != null) ...[
@@ -101,7 +101,8 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
               const SizedBox(height: 36),
               TextField(
                 controller: _codeController,
-                keyboardType: TextInputType.number,
+                keyboardType: TextInputType.text,
+                textCapitalization: TextCapitalization.characters,
                 maxLength: 6,
                 decoration: const InputDecoration(
                   labelText: 'OTP code',
@@ -147,7 +148,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                   TextButton(
                     onPressed: () => Navigator.pop(context),
                     child: const Text(
-                      'Change number',
+                      'Change destination',
                       style: TextStyle(
                         color: AppColors.slate,
                         fontSize: 16,
@@ -165,8 +166,9 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
   }
 
   Future<void> _verify(OtpScreenArguments args) async {
-    if (_codeController.text.trim().length != 6) {
-      _showMessage('Enter the 6-digit OTP code.');
+    final code = _codeController.text.trim().toUpperCase();
+    if (code.isEmpty) {
+      _showMessage('Enter the OTP code.');
       return;
     }
     setState(() => _isSubmitting = true);
@@ -175,7 +177,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
           .read(authApiProvider)
           .verifyOtp(
             challengeId: args.challengeId,
-            code: _codeController.text.trim(),
+            code: code,
             requestedRole: args.requestedRole,
             displayName: args.displayName,
           );
@@ -202,7 +204,8 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
       final challenge = await ref
           .read(authApiProvider)
           .sendOtp(
-            phoneNumber: args.phoneNumber,
+            identifier: args.identifier,
+            channel: args.channel,
             requestedRole: args.requestedRole,
           );
       if (!mounted) {
@@ -214,9 +217,12 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
         arguments: OtpScreenArguments(
           challengeId: challenge.challengeId,
           phoneNumber: challenge.phoneNumber,
+          identifier: args.identifier,
+          channel: challenge.channel ?? args.channel,
           requestedRole: args.requestedRole,
           displayName: args.displayName,
           devOtpCode: challenge.devOtpCode,
+          maskedDestination: challenge.maskedDestination,
         ),
       );
     } on ApiException catch (error) {

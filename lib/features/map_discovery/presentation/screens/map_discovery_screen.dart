@@ -12,6 +12,22 @@ import 'package:wirasasa/features/service_request/presentation/providers/booking
 
 const LatLng _clientLocation = LatLng(-1.2600, 36.8040);
 
+typedef _ProviderSearchRequest = ({String serviceCode, String query});
+
+final _mapDiscoveryProvidersProvider =
+    FutureProvider.family<List<ProviderSummary>, _ProviderSearchRequest>((
+      ref,
+      request,
+    ) {
+      return ref
+          .read(providersApiProvider)
+          .searchProviders(
+            serviceCode: request.serviceCode,
+            query: request.query,
+            onlineOnly: true,
+          );
+    });
+
 class MapDiscoveryScreen extends ConsumerStatefulWidget {
   const MapDiscoveryScreen({
     super.key,
@@ -33,7 +49,6 @@ class MapDiscoveryScreen extends ConsumerStatefulWidget {
 class _MapDiscoveryScreenState extends ConsumerState<MapDiscoveryScreen> {
   late final TextEditingController _controller;
   GoogleMapController? _mapController;
-  late Future<List<ProviderSummary>> _providersFuture;
   late String _query;
   ProviderSummary? _selectedProvider;
 
@@ -42,16 +57,6 @@ class _MapDiscoveryScreenState extends ConsumerState<MapDiscoveryScreen> {
     super.initState();
     _query = widget.initialQuery ?? widget.serviceName;
     _controller = TextEditingController(text: _query);
-    _providersFuture = _loadProviders();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref
-          .read(bookingFlowProvider.notifier)
-          .startFlow(
-            serviceCode: widget.serviceCode,
-            serviceName: widget.serviceName,
-            scheduledDateTime: widget.scheduledDateTime,
-          );
-    });
   }
 
   @override
@@ -62,45 +67,24 @@ class _MapDiscoveryScreenState extends ConsumerState<MapDiscoveryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final searchRequest = (serviceCode: widget.serviceCode, query: _query);
+    final providersAsync = ref.watch(
+      _mapDiscoveryProvidersProvider(searchRequest),
+    );
+
+    ref.listen<AsyncValue<List<ProviderSummary>>>(
+      _mapDiscoveryProvidersProvider(searchRequest),
+      (previous, next) {
+        next.whenData((providers) {
+          _focusOnProviders(providers, _resolveSelectedProvider(providers));
+        });
+      },
+    );
+
     return Scaffold(
       body: Stack(
         children: [
-          Positioned.fill(
-            child: FutureBuilder<List<ProviderSummary>>(
-              future: _providersFuture,
-              builder: (context, snapshot) {
-                final providers = snapshot.data ?? const <ProviderSummary>[];
-                final selectedProvider = _resolveSelectedProvider(providers);
-                if (!_supportsGoogleMaps) {
-                  return const _UnsupportedMapFallback();
-                }
-                return GoogleMap(
-                  initialCameraPosition: CameraPosition(
-                    target: selectedProvider?.location ?? _clientLocation,
-                    zoom: 13.8,
-                  ),
-                  myLocationButtonEnabled: false,
-                  zoomControlsEnabled: false,
-                  compassEnabled: false,
-                  markers: _buildMarkers(providers, selectedProvider),
-                  polylines: selectedProvider == null
-                      ? const {}
-                      : {
-                          Polyline(
-                            polylineId: const PolylineId('selected-route'),
-                            points: [_clientLocation, selectedProvider.location],
-                            width: 5,
-                            color: AppColors.green,
-                          ),
-                        },
-                  onMapCreated: (controller) {
-                    _mapController = controller;
-                    _focusOnProviders(providers, selectedProvider);
-                  },
-                );
-              },
-            ),
-          ),
+          Positioned.fill(child: _buildMap(providersAsync)),
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
@@ -138,10 +122,7 @@ class _MapDiscoveryScreenState extends ConsumerState<MapDiscoveryScreen> {
                                 child: TextField(
                                   controller: _controller,
                                   onChanged: (value) {
-                                    setState(() {
-                                      _query = value;
-                                      _providersFuture = _loadProviders();
-                                    });
+                                    setState(() => _query = value);
                                   },
                                   decoration: const InputDecoration(
                                     hintText: 'Which service do you need?',
@@ -172,41 +153,38 @@ class _MapDiscoveryScreenState extends ConsumerState<MapDiscoveryScreen> {
                   color: Colors.white,
                   borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
                 ),
-                child: FutureBuilder<List<ProviderSummary>>(
-                  future: _providersFuture,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    if (snapshot.hasError) {
-                      final error = snapshot.error;
-                      final message = error is ApiException
-                          ? error.message
-                          : 'Failed to load providers.';
-                      return Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(message, textAlign: TextAlign.center),
-                              const SizedBox(height: 12),
-                              FilledButton(
-                                onPressed: () {
-                                  setState(() {
-                                    _providersFuture = _loadProviders();
-                                  });
-                                },
-                                child: const Text('Retry'),
-                              ),
-                            ],
-                          ),
+                child: providersAsync.when(
+                  loading: () =>
+                      const Center(child: CircularProgressIndicator()),
+                  error: (error, stackTrace) {
+                    final message = error is ApiException
+                        ? error.message
+                        : 'Failed to load providers.';
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(message, textAlign: TextAlign.center),
+                            const SizedBox(height: 12),
+                            FilledButton(
+                              onPressed: () {
+                                ref.invalidate(
+                                  _mapDiscoveryProvidersProvider(searchRequest),
+                                );
+                              },
+                              child: const Text('Retry'),
+                            ),
+                          ],
                         ),
-                      );
-                    }
-
-                    final providers = snapshot.data ?? const <ProviderSummary>[];
-                    final selectedProvider = _resolveSelectedProvider(providers);
+                      ),
+                    );
+                  },
+                  data: (providers) {
+                    final selectedProvider = _resolveSelectedProvider(
+                      providers,
+                    );
                     return ListView(
                       controller: controller,
                       padding: const EdgeInsets.fromLTRB(18, 16, 18, 30),
@@ -287,12 +265,37 @@ class _MapDiscoveryScreenState extends ConsumerState<MapDiscoveryScreen> {
     );
   }
 
-  Future<List<ProviderSummary>> _loadProviders() {
-    return ref.read(providersApiProvider).searchProviders(
-          serviceCode: widget.serviceCode,
-          query: _query,
-          onlineOnly: true,
-        );
+  Widget _buildMap(AsyncValue<List<ProviderSummary>> providersAsync) {
+    if (!_supportsGoogleMaps) {
+      return const _UnsupportedMapFallback();
+    }
+
+    final providers = providersAsync.value ?? const <ProviderSummary>[];
+    final selectedProvider = _resolveSelectedProvider(providers);
+    return GoogleMap(
+      initialCameraPosition: CameraPosition(
+        target: selectedProvider?.location ?? _clientLocation,
+        zoom: 13.8,
+      ),
+      myLocationButtonEnabled: false,
+      zoomControlsEnabled: false,
+      compassEnabled: false,
+      markers: _buildMarkers(providers, selectedProvider),
+      polylines: selectedProvider == null
+          ? const {}
+          : {
+              Polyline(
+                polylineId: const PolylineId('selected-route'),
+                points: [_clientLocation, selectedProvider.location],
+                width: 5,
+                color: AppColors.green,
+              ),
+            },
+      onMapCreated: (controller) {
+        _mapController = controller;
+        _focusOnProviders(providers, selectedProvider);
+      },
+    );
   }
 
   ProviderSummary? _resolveSelectedProvider(List<ProviderSummary> providers) {
@@ -303,16 +306,12 @@ class _MapDiscoveryScreenState extends ConsumerState<MapDiscoveryScreen> {
     }
     if (preserved != null &&
         providers.any((provider) => provider.id == preserved.id)) {
-      _selectedProvider = preserved;
       return preserved;
     }
     if (providers.isEmpty) {
-      _selectedProvider = null;
       return null;
     }
-    _selectedProvider = providers.first;
-    ref.read(bookingFlowProvider.notifier).selectProvider(_selectedProvider!);
-    return _selectedProvider;
+    return providers.first;
   }
 
   Set<Marker> _buildMarkers(
@@ -332,7 +331,8 @@ class _MapDiscoveryScreenState extends ConsumerState<MapDiscoveryScreen> {
           position: provider.location,
           infoWindow: InfoWindow(
             title: provider.displayName,
-            snippet: '${provider.primaryService?.serviceName ?? widget.serviceName} • ${provider.eta}',
+            snippet:
+                '${provider.primaryService?.serviceName ?? widget.serviceName} • ${provider.eta}',
           ),
           icon: _markerIcon(
             isClient: false,
@@ -349,7 +349,7 @@ class _MapDiscoveryScreenState extends ConsumerState<MapDiscoveryScreen> {
     ProviderSummary? selectedProvider,
   ) async {
     final controller = _mapController;
-    if (controller == null || !_supportsGoogleMaps || providers.isEmpty) {
+    if (controller == null || !_supportsGoogleMaps) {
       return;
     }
 
@@ -357,6 +357,10 @@ class _MapDiscoveryScreenState extends ConsumerState<MapDiscoveryScreen> {
       await controller.animateCamera(
         CameraUpdate.newLatLngZoom(selectedProvider.location, 14.5),
       );
+      return;
+    }
+
+    if (providers.isEmpty) {
       return;
     }
 

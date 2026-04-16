@@ -12,10 +12,7 @@ class AuthApi {
   }) async {
     final response = await _client.postJson(
       '/api/auth/check-user',
-      body: {
-        'phoneNumber': phoneNumber,
-        'requestedRole': requestedRole,
-      },
+      body: {'phoneNumber': phoneNumber, 'requestedRole': requestedRole},
     );
     return UserLookup.fromJson(response as Map<String, dynamic>);
   }
@@ -59,13 +56,15 @@ class AuthApi {
   }
 
   Future<OtpChallenge> sendOtp({
-    required String phoneNumber,
+    required String identifier,
+    required String channel,
     required String requestedRole,
   }) async {
     final response = await _client.postJson(
       '/api/auth/send-otp',
       body: {
-        'phoneNumber': phoneNumber,
+        'identifier': identifier,
+        'channel': channel,
         'requestedRole': requestedRole,
       },
     );
